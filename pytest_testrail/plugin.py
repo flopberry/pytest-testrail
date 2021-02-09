@@ -1,5 +1,6 @@
 # -*- coding: UTF-8 -*-
 from datetime import datetime
+from itertools import chain
 from operator import itemgetter
 
 import pytest
@@ -140,8 +141,9 @@ def get_testrail_keys(items):
 
 class PyTestRailPlugin(object):
     def __init__(self, client, assign_user_id, project_id, suite_id, include_all, cert_check, tr_name,
-                 tr_description='', run_id=0, plan_id=0, version='', close_on_complete=False,
-                 publish_blocked=True, skip_missing=False, milestone_id=None, custom_comment=None):
+                 tr_description='', run_id=0,
+                 plan_id=0, version='', close_on_complete=False, publish_blocked=True, skip_missing=False,
+                 milestone_id=None, custom_comment=None, merge_statuses=False):
         self.assign_user_id = assign_user_id
         self.cert_check = cert_check
         self.client = client
@@ -159,6 +161,7 @@ class PyTestRailPlugin(object):
         self.skip_missing = skip_missing
         self.milestone_id = milestone_id
         self.custom_comment = custom_comment
+        self.merge_statuses = merge_statuses
 
     # pytest hooks
 
@@ -244,7 +247,10 @@ class PyTestRailPlugin(object):
         print('[{}] Start publishing'.format(TESTRAIL_PREFIX))
         if self.results:
             tests_list = [str(result['case_id']) for result in self.results]
-            print('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(tests_list)))
+            if self.merge_statuses:
+                print('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(set(tests_list))))
+            else:
+                print('[{}] Testcases to publish: {}'.format(TESTRAIL_PREFIX, ', '.join(tests_list)))
 
             if self.testrun_id:
                 self.add_results(self.testrun_id)
@@ -303,6 +309,33 @@ class PyTestRailPlugin(object):
         # Comment sort by status_id due to issue with pytest-rerun failures,
         # for details refer to issue https://github.com/allankp/pytest-testrail/issues/100
         # self.results.sort(key=itemgetter('status_id'))
+
+        if self.merge_statuses:
+            cased_results = {}
+            for result in self.results:
+                result_case = cased_results.get(result['case_id'], [])
+                result_case.append(result)
+                cased_results[result['case_id']] = result_case
+
+            self.results = []
+
+            for case_id, results in cased_results.items():
+                if all(map(lambda result: result['status_id'] == TESTRAIL_TEST_STATUS['blocked'], results)):
+                    status_id = TESTRAIL_TEST_STATUS['blocked']
+                if any(map(lambda result: result['status_id'] == TESTRAIL_TEST_STATUS['failed'], results)):
+                    status_id = TESTRAIL_TEST_STATUS['failed']
+                else:
+                    status_id = TESTRAIL_TEST_STATUS['passed']
+
+                data = {
+                    'case_id': case_id,
+                    'status_id': status_id,
+                    'comment': "\n\n\n".join(
+                        [str(result['comment']) for result in results if result.get('comment')]) or None,
+                    'duration': sum([result.get('duration', 0) for result in results]),
+                    'defects': list(chain(*[result.get('defects') or [] for result in results])) or None,
+                }
+                self.results.append(data)
         self.results.sort(key=itemgetter('case_id'))
 
         # Manage case of "blocked" testcases
