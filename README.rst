@@ -1,8 +1,6 @@
 pytest-testrail
 ===============
 
-|Build Status| |PyPI version|
-
 This is a pytest plugin for creating/editing testplans or testruns based
 on pytest markers. The results of the collected tests will be updated
 against the testplan/testrun in TestRail.
@@ -121,8 +119,3 @@ All available options
                            Do not publish results of "blocked" testcases in
                            TestRail
      --tr-skip-missing     Skip test cases that are not present in testrun
-
-.. |Build Status| image:: https://travis-ci.org/allankp/pytest-testrail.svg?branch=master
-   :target: https://travis-ci.org/allankp/pytest-testrail
-.. |PyPI version| image:: https://badge.fury.io/py/pytest-testrail.svg
-   :target: https://badge.fury.io/py/pytest-testrail
