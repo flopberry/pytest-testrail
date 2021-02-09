@@ -149,6 +149,7 @@ class PyTestRailPlugin(object):
         self.client = client
         self.project_id = project_id
         self.results = []
+        self.steps_results = {}
         self.suite_id = suite_id
         self.include_all = include_all
         self.testrun_name = tr_name
@@ -214,37 +215,27 @@ class PyTestRailPlugin(object):
         outcome = yield
         rep = outcome.get_result()
         defectids = None
-        if 'callspec' in dir(item):
-            test_parametrize = item.callspec.params
-        else:
-            test_parametrize = None
         comment = rep.longrepr
         if item.get_closest_marker(TESTRAIL_DEFECTS_PREFIX):
             defectids = item.get_closest_marker(TESTRAIL_DEFECTS_PREFIX).kwargs.get('defect_ids')
         if item.get_closest_marker(TESTRAIL_PREFIX):
             testcaseids = item.get_closest_marker(TESTRAIL_PREFIX).kwargs.get('ids')
-            if rep.when == 'call' and testcaseids:
-                if defectids:
-                    self.add_result(
-                        clean_test_ids(testcaseids),
-                        get_test_outcome(outcome.get_result().outcome),
-                        comment=comment,
-                        duration=rep.duration,
-                        defects=str(clean_test_defects(defectids)).replace('[', '').replace(']', '').replace("'", ''),
-                        test_parametrize=test_parametrize
-                    )
-                else:
-                    self.add_result(
-                        clean_test_ids(testcaseids),
-                        get_test_outcome(outcome.get_result().outcome),
-                        comment=comment,
-                        duration=rep.duration,
-                        test_parametrize=test_parametrize
-                    )
+            if testcaseids:
+                defects = (str(clean_test_defects(defectids)).replace('[', '').replace(']', '').replace("'", '')
+                           if defectids else None)
+                self.add_step_result(
+                    "{}::{}".format(str(item.fspath), item.originalname),
+                    clean_test_ids(testcaseids),
+                    get_test_outcome(outcome.get_result().outcome),
+                    comment=comment,
+                    duration=rep.duration,
+                    defects=defects
+                )
 
     def pytest_sessionfinish(self, session, exitstatus):
         """ Publish results in TestRail """
         print('[{}] Start publishing'.format(TESTRAIL_PREFIX))
+        self.make_result()
         if self.results:
             tests_list = [str(result['case_id']) for result in self.results]
             if self.merge_statuses:
@@ -270,27 +261,40 @@ class PyTestRailPlugin(object):
 
     # plugin
 
-    def add_result(self, test_ids, status, comment='', defects=None, duration=0, test_parametrize=None):
-        """
-        Add a new result to results dict to be submitted at the end.
+    def add_step_result(self, test_name, test_ids, status, comment='', defects=None, duration=0):
+        test_steps_result = self.steps_results.get(test_name, {})
+        test_steps_result['comment'] = comment if comment else test_steps_result.get('comment', '')
+        test_steps_result['duration'] = test_steps_result.get('duration', 0) + duration
+        test_steps_result['test_ids'] = test_steps_result.get('test_ids', set())
+        if test_ids:
+            test_steps_result['test_ids'].update(set(test_ids))
 
-        :param list test_parametrize: Add test parametrize to test result
-        :param defects: Add defects to test result
-        :param list test_ids: list of test_ids.
-        :param int status: status code of test (pass or fail).
-        :param comment: None or a failure representation.
-        :param duration: Time it took to run just the test.
-        """
-        for test_id in test_ids:
-            data = {
-                'case_id': test_id,
-                'status_id': status,
-                'comment': comment,
-                'duration': duration,
-                'defects': defects,
-                'test_parametrize': test_parametrize
-            }
-            self.results.append(data)
+        test_steps_result['status'] = (
+            status
+            if test_steps_result.get('status') == TESTRAIL_TEST_STATUS['passed']
+               or test_steps_result.get('status') is None
+            else test_steps_result['status']
+        )
+        test_steps_result['defects'] = (
+            test_steps_result.get('defects', set()).update(set(defects))
+            if defects
+            else test_steps_result.get('defects')
+        )
+
+        self.steps_results[test_name] = test_steps_result
+
+    def make_result(self):
+        self.results = []
+        for step_result in self.steps_results.values():
+            for test_id in step_result['test_ids']:
+                data = {
+                    'case_id': test_id,
+                    'status_id': step_result['status'],
+                    'comment': step_result['comment'],
+                    'duration': step_result['duration'],
+                    'defects': list(step_result['defects']) if step_result['defects'] else None,
+                }
+                self.results.append(data)
 
     def add_results(self, testrun_id):
         """

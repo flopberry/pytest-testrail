@@ -10,7 +10,7 @@ setup(
     name='pytest-testrail',
     description='pytest plugin for creating TestRail runs and adding results',
     long_description=read_file('README.rst'),
-    version='2.9.1',
+    version='2.9.2',
     author='Maksym Sivash',
     author_email='flopberry@gmail.com',
     url='http://github.com/flopberry/pytest-testrail/',
